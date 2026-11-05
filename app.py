@@ -12,8 +12,10 @@ import json
 import time
 import threading
 import requests
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from http.server import HTTPServer, BaseHTTPRequestHandler
+
+VN_TZ = timezone(timedelta(hours=7))
 
 from hot_news_scout import (
     scout_hot_news, 
@@ -68,22 +70,22 @@ def send_msg(text, chat_id=ADMIN_CHAT_ID, reply_to=None, reply_markup=None):
     return None
 
 def daily_scheduler_loop():
-    print("[SCOUT_SCHEDULER] ✅ Tiến trình quét tin tự động 24/7 trên Koyeb Cloud đã kích hoạt!")
+    print("[SCOUT_SCHEDULER] ✅ Tiến trình quét tin tự động 24/7 (GMT+7) đã kích hoạt!")
     while True:
         try:
             sched = load_schedule()
             if sched.get("enabled", True):
-                now = datetime.now()
+                now = datetime.now(VN_TZ)
                 current_time = now.strftime("%H:%M")
                 today_str = now.strftime("%Y-%m-%d")
                 slots = sched.get("slots", ["07:00", "11:30", "17:30", "21:00"])
                 last_trig = sched.get("last_triggered", {})
 
                 if current_time in slots and last_trig.get(current_time) != today_str:
-                    print(f"[SCOUT_SCHEDULER] ⏰ Đến giờ quét tin tự động: {current_time} ngày {today_str}!")
+                    print(f"[SCOUT_SCHEDULER] ⏰ Đến giờ quét tin tự động: {current_time} ngày {today_str} (Giờ VN)!")
 
                     send_msg(
-                        f"⏰ <b>[BẢN TIN TỰ ĐỘNG KOYEB CLOUD 24/7 - KHUNG GIỜ {current_time}]</b>\n\n"
+                        f"⏰ <b>[BẢN TIN TỰ ĐỘNG CLOUD 24/7 - KHUNG GIỜ {current_time}]</b>\n\n"
                         f"🔥 Radar săn tin giật gân & tương tác cao đang quét các báo lớn cho ngày hôm nay ({now.strftime('%d/%m/%Y')})...\n"
                         f"⏳ Đang xử lý qua Gemini AI, bản tin TOP 5 sẽ gửi ngay bên dưới!"
                     )
@@ -108,15 +110,25 @@ def daily_scheduler_loop():
 
 class HealthHandler(BaseHTTPRequestHandler):
     def do_GET(self):
+        if self.path in ['/healthz', '/ping', '/live']:
+            self.send_response(200)
+            self.send_header('Content-type', 'text/plain; charset=utf-8')
+            self.end_headers()
+            self.wfile.write(b"OK")
+            return
+
         self.send_response(200)
         self.send_header('Content-type', 'text/html; charset=utf-8')
         self.end_headers()
-        response_html = """
+        now_vn = datetime.now(VN_TZ).strftime('%H:%M:%S - %d/%m/%Y')
+        response_html = f"""
         <html>
             <head><title>Antigravity Scout Bot</title></head>
             <body style="font-family: Arial, sans-serif; text-align: center; padding-top: 50px;">
-                <h1 style="color: #00aa00;">✅ Antigravity Scout Bot is Running 24/7 on Koyeb!</h1>
-                <p>Status: Healthy | Scheduler Active (07:00, 11:30, 17:30, 21:00)</p>
+                <h1 style="color: #00aa00;">✅ Antigravity Scout Bot is Running 24/7!</h1>
+                <p>Status: <b>Healthy</b> | Scheduler Active (07:00, 11:30, 17:30, 21:00 GMT+7)</p>
+                <p>Server Time (Vietnam GMT+7): <b>{now_vn}</b></p>
+                <p style="color: #666; font-size: 13px;">Uptime Ping Endpoint: <code>/ping</code></p>
             </body>
         </html>
         """
@@ -134,14 +146,27 @@ def run_health_server():
 
 def start_scout_bot():
     print("======================================================")
-    print("   SCOUT BOT KOYEB CLOUD 24/7 (@findnew009bot)       ")
+    print("   SCOUT BOT CLOUD 24/7 (@findnew009bot)              ")
     print("======================================================")
-    print(f"-> Bot Token: {BOT_TOKEN[:10]}... (OK)")
+    if not BOT_TOKEN:
+        print("❌ [LỖI NGHIÊM TRỌNG] Biến môi trường BOT_TOKEN đang bị TRỐNG!")
+        print("   -> Bạn cần thêm biến BOT_TOKEN vào phần Environment trên Render/Koyeb!")
+    else:
+        print(f"-> Bot Token: {BOT_TOKEN[:10]}... (OK)")
+
+    gemini_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
+    if not gemini_key:
+        print("⚠️ [CẢNH BÁO] Biến môi trường GEMINI_API_KEY đang bị TRỐNG!")
+        print("   -> Cần thêm GEMINI_API_KEY vào Environment để phân tích tin tức!")
+    else:
+        print("-> Gemini API Key: (Đã cấu hình)")
+
     print(f"-> Admin ID: {ADMIN_CHAT_ID}")
     print(f"-> Liên kết Bot News: @{NEWS_BOT_USERNAME}")
+    print(f"-> Giờ Việt Nam hiện tại: {datetime.now(VN_TZ).strftime('%H:%M:%S %d/%m/%Y')}")
     print("-> Bot đang lắng nghe tin nhắn Telegram...")
 
-    # Bật Health Server cho Koyeb
+    # Bật Health Server
     t_http = threading.Thread(target=run_health_server, daemon=True)
     t_http.start()
 
@@ -150,6 +175,7 @@ def start_scout_bot():
     t_sched.start()
 
     offset = None
+    last_err_time = 0
     while True:
         try:
             params = {"timeout": 30}
@@ -158,7 +184,11 @@ def start_scout_bot():
 
             resp = requests.get(f"{API_BASE}/getUpdates", params=params, timeout=35)
             if resp.status_code != 200:
-                time.sleep(2)
+                cur_t = time.time()
+                if cur_t - last_err_time > 15:
+                    print(f"[SCOUT_BOT CẢNH BÁO] getUpdates thất bại (HTTP {resp.status_code}): {resp.text}")
+                    last_err_time = cur_t
+                time.sleep(3)
                 continue
 
             updates = resp.json().get("result", [])

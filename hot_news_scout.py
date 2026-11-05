@@ -12,13 +12,15 @@ import json
 import time
 import requests
 import xml.etree.ElementTree as ET
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from email.utils import parsedate_to_datetime
 from concurrent.futures import ThreadPoolExecutor
 from google import genai
 
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
-SCOUT_BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
+VN_TZ = timezone(timedelta(hours=7))
+
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY") or ""
+SCOUT_BOT_TOKEN = os.environ.get("BOT_TOKEN") or os.environ.get("SCOUT_BOT_TOKEN") or os.environ.get("TELEGRAM_BOT_TOKEN") or ""
 ADMIN_CHAT_ID = int(os.environ.get("ADMIN_CHAT_ID", "6368500019"))
 NEWS_BOT_USERNAME = os.environ.get("NEWS_BOT_USERNAME", "new3089bot")
 API_BASE = f"https://api.telegram.org/bot{SCOUT_BOT_TOKEN}"
@@ -186,7 +188,7 @@ YÊU CẦU ĐẦU RA (CHỈ XUẤT JSON):
         return []
 
 def format_telegram_digest(ranked_news, hours_min=6, hours_max=9):
-    now_str = datetime.now().strftime("%H:%M - %d/%m/%Y")
+    now_str = datetime.now(VN_TZ).strftime("%H:%M - %d/%m/%Y")
     text = (
         f"🔥 <b>BẢN TIN GIẬT GÂN & TƯƠNG TÁC CAO NHẤT</b>\n"
         f"<i>(Đăng trong khung giờ: cách đây {hours_min} - {hours_max} tiếng)</i>\n"
