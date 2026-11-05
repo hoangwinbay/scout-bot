@@ -19,6 +19,9 @@ VN_TZ = timezone(timedelta(hours=7))
 
 from hot_news_scout import (
     scout_hot_news, 
+    scan_realtime_breaking_news,
+    format_realtime_alert,
+    create_realtime_markup,
     SCOUT_BOT_TOKEN as BOT_TOKEN, 
     ADMIN_CHAT_ID, 
     NEWS_BOT_USERNAME, 
@@ -47,6 +50,58 @@ def save_schedule(sched):
             json.dump(sched, f, ensure_ascii=False, indent=2)
     except Exception as e:
         print("[SCOUT_SCHEDULER] Lỗi lưu schedule:", e)
+
+REALTIME_CONFIG_PATH = os.path.join(os.path.dirname(__file__), "realtime_config.json")
+
+def load_realtime_config():
+    if os.path.exists(REALTIME_CONFIG_PATH):
+        try:
+            with open(REALTIME_CONFIG_PATH, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {
+        "enabled": True,
+        "interval_seconds": 180,  # Quét liên tục mỗi 3 phút
+        "threshold": 7.8,         # Điểm kịch tính viral >= 7.8/10
+        "max_age_hours": 2.0
+    }
+
+def save_realtime_config(cfg):
+    try:
+        with open(REALTIME_CONFIG_PATH, "w", encoding="utf-8") as f:
+            json.dump(cfg, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print("[REALTIME] Lỗi lưu realtime_config:", e)
+
+def realtime_monitor_loop():
+    print("[REALTIME_MONITOR] 🚀 Tiến trình rà soát tin nóng liên tục 24/7 (Real-time Scout) đã kích hoạt!")
+    time.sleep(3)
+    while True:
+        try:
+            cfg = load_realtime_config()
+            if cfg.get("enabled", True):
+                threshold = float(cfg.get("threshold", 7.8))
+                max_age = float(cfg.get("max_age_hours", 2.0))
+
+                hot_items = scan_realtime_breaking_news(
+                    threshold=threshold,
+                    max_age_hours=max_age
+                )
+
+                if hot_items:
+                    print(f"[REALTIME_MONITOR] 🔥 BÙNG NỔ TIN NÓNG! Tìm thấy {len(hot_items)} bài kịch tính >= {threshold}. Đang gửi cảnh báo...")
+                    for item in hot_items:
+                        text = format_realtime_alert(item)
+                        markup = create_realtime_markup(item)
+                        send_msg(text, chat_id=ADMIN_CHAT_ID, reply_markup=markup)
+                        time.sleep(1.2)
+        except Exception as e:
+            print("[REALTIME_MONITOR] Ngoại lệ trong loop rà soát:", e)
+
+        cfg = load_realtime_config()
+        sleep_sec = max(30, int(cfg.get("interval_seconds", 180)))
+        time.sleep(sleep_sec)
 
 def send_msg(text, chat_id=ADMIN_CHAT_ID, reply_to=None, reply_markup=None):
     payload = {
@@ -121,12 +176,17 @@ class HealthHandler(BaseHTTPRequestHandler):
         self.send_header('Content-type', 'text/html; charset=utf-8')
         self.end_headers()
         now_vn = datetime.now(VN_TZ).strftime('%H:%M:%S - %d/%m/%Y')
+        cfg = load_realtime_config()
+        rt_status = "🟢 Đang quét liên tục" if cfg.get("enabled", True) else "🔴 Đang tắt"
+        rt_interval = cfg.get("interval_seconds", 180)
+        rt_thresh = cfg.get("threshold", 7.8)
         response_html = f"""
         <html>
-            <head><title>Antigravity Scout Bot</title></head>
+            <head><title>Antigravity Scout Bot - Real-time 24/7</title></head>
             <body style="font-family: Arial, sans-serif; text-align: center; padding-top: 50px;">
                 <h1 style="color: #00aa00;">✅ Antigravity Scout Bot is Running 24/7!</h1>
-                <p>Status: <b>Healthy</b> | Scheduler Active (07:00, 11:30, 17:30, 21:00 GMT+7)</p>
+                <p>⚡ <b>Radar săn tin tức liên tục:</b> {rt_status} (Quét mỗi {rt_interval}s, Ngưỡng: {rt_thresh}/10)</p>
+                <p>⏰ <b>Bản tin tổng hợp định kỳ:</b> Active (07:00, 11:30, 17:30, 21:00 GMT+7)</p>
                 <p>Server Time (Vietnam GMT+7): <b>{now_vn}</b></p>
                 <p style="color: #666; font-size: 13px;">Uptime Ping Endpoint: <code>/ping</code></p>
             </body>
@@ -170,7 +230,11 @@ def start_scout_bot():
     t_http = threading.Thread(target=run_health_server, daemon=True)
     t_http.start()
 
-    # Bật Scheduler tự động
+    # Bật Radar rà soát tin nóng liên tục 24/7 (Real-time Scout)
+    t_realtime = threading.Thread(target=realtime_monitor_loop, daemon=True)
+    t_realtime.start()
+
+    # Bật Scheduler tự động gửi báo cáo định kỳ
     t_sched = threading.Thread(target=daily_scheduler_loop, daemon=True)
     t_sched.start()
 
@@ -221,20 +285,111 @@ def start_scout_bot():
 
                 if lower_text in ["/start", "start", "bat dau", "bắt đầu"]:
                     welcome = (
-                        "👋 <b>Chào mừng bạn đến với Scout Bot (Koyeb Cloud 24/7)!</b>\n\n"
-                        "🔥 <b>Nhiệm vụ của bot:</b>\n"
-                        "• Tự động quét và tìm kiếm tin tức giật gân, nhiều tương tác trong 6 - 9 tiếng trước.\n"
-                        "• Đánh giá và lọc ra TOP 5 bài báo hot nhất qua Gemini AI.\n"
-                        "• Gửi báo cáo định kỳ mỗi ngày hoặc theo lệnh của bạn!\n\n"
-                        "📋 <b>Các lệnh điều khiển:</b>\n"
-                        "• <code>/hot</code> : Quét tin giật gân ngay lập tức (6-9h trước)\n"
-                        "• <code>/hot 3 6</code> : Quét tin trong khoảng 3 đến 6 tiếng trước\n"
-                        "• <code>/schedule</code> : Xem lịch tự động quét mỗi ngày\n"
-                        "• <code>/hengio 07:00, 11:30, 17:30, 21:00</code> : Đổi lịch quét tự động\n"
-                        "• <code>/schedule on</code> hoặc <code>/schedule off</code> : Bật/tắt tự động\n\n"
-                        f"🎬 Khi chọn được bài ưng ý, chạm vào <b>Dựng video</b> để chuyển sang @{NEWS_BOT_USERNAME} tạo video 9:16!"
+                        "👋 <b>Chào mừng bạn đến với Scout Bot Cloud 24/7 (@findnew009bot)!</b>\n\n"
+                        "🔥 <b>Cơ chế hoạt động kép:</b>\n"
+                        "1. ⚡ <b>Radar Quét Liên Tục (Real-time):</b> Quét liên tục các báo lớn cứ mỗi 3 phút. Cứ có bài nào vừa đăng mà THỰC SỰ GIẬT GÂN, KỊCH TÍNH, ĐỘT BIẾN là bắn tin ngay lập tức (bất kể ngày đêm)!\n"
+                        "2. ⏰ <b>Bản tin định kỳ:</b> Tự động tổng hợp TOP 5 bài nóng nhất vào 07:00, 11:30, 17:30, 21:00.\n\n"
+                        "📋 <b>Lệnh điều khiển Radar Liên Tục:</b>\n"
+                        "• <code>/realtime</code> : Xem trạng thái radar liên tục\n"
+                        "• <code>/realtime on</code> / <code>/realtime off</code> : Bật/tắt quét liên tục\n"
+                        "• <code>/interval 3</code> : Đổi chu kỳ quét (ví dụ mỗi 3 phút)\n"
+                        "• <code>/threshold 8.0</code> : Đổi ngưỡng điểm kịch tính (thang 1 - 10)\n"
+                        "• <code>/check</code> : Quét kiểm tra ngay 1 vòng và báo tin tức\n\n"
+                        "📋 <b>Lệnh khác:</b>\n"
+                        "• <code>/hot</code> : Quét TOP 5 tin nóng trong 6-9h trước\n"
+                        "• <code>/schedule</code> : Xem lịch tổng hợp định kỳ\n\n"
+                        f"🎬 Khi có tin ưng ý, chạm vào nút <b>Dựng video</b> để chuyển sang @{NEWS_BOT_USERNAME} tạo video 9:16!"
                     )
                     send_msg(welcome, chat_id=chat_id, reply_to=msg_id)
+                    continue
+
+                if lower_text in ["/realtime", "radar", "realtime", "trang thai"]:
+                    cfg = load_realtime_config()
+                    st_str = "🟢 Đang BẬT rà soát liên tục" if cfg.get("enabled", True) else "🔴 Đang TẮT"
+                    inter = cfg.get("interval_seconds", 180)
+                    thresh = cfg.get("threshold", 7.8)
+                    msg_rt = (
+                        f"⚡ <b>RADAR SĂN TIN NÓNG LIÊN TỤC 24/7 (REAL-TIME SCOUT)</b>\n\n"
+                        f"• <b>Trạng thái:</b> {st_str}\n"
+                        f"• <b>Chu kỳ quét:</b> Mỗi <code>{inter}</code> giây ({inter//60} phút)\n"
+                        f"• <b>Ngưỡng kịch tính/hot:</b> <code>{thresh}/10</code>\n"
+                        f"• <b>Cơ chế:</b> Tự động cào VnExpress, Dân trí, Tuổi Trẻ, VietNamNet, Thanh Niên, Tiền Phong. Cứ có tin nào mới xuất bản và đạt điểm kịch tính là lập tức bắn tin về Telegram!\n\n"
+                        f"⚙️ <b>Lệnh điều khiển:</b>\n"
+                        f"• <code>/realtime on</code> : Bật quét liên tục\n"
+                        f"• <code>/realtime off</code> : Tắt quét liên tục\n"
+                        f"• <code>/interval 3</code> : Đổi chu kỳ quét (ví dụ 3 phút)\n"
+                        f"• <code>/threshold 8.0</code> : Đổi ngưỡng điểm kịch tính (1 - 10)\n"
+                        f"• <code>/check</code> : Quét kiểm tra ngay lập tức 1 vòng"
+                    )
+                    send_msg(msg_rt, chat_id=chat_id, reply_to=msg_id)
+                    continue
+
+                if lower_text in ["/realtime on", "bat realtime", "bật realtime", "bat radar"]:
+                    cfg = load_realtime_config()
+                    cfg["enabled"] = True
+                    save_realtime_config(cfg)
+                    send_msg("🟢 <b>ĐÃ BẬT RADAR SĂN TIN NÓNG LIÊN TỤC 24/7!</b>\nBot sẽ tự động quét báo định kỳ và bắn tin nóng ngay khi vừa xuất bản.", chat_id=chat_id, reply_to=msg_id)
+                    continue
+
+                if lower_text in ["/realtime off", "tat realtime", "tắt realtime", "tat radar"]:
+                    cfg = load_realtime_config()
+                    cfg["enabled"] = False
+                    save_realtime_config(cfg)
+                    send_msg("🔴 <b>Đã TẮT tính năng săn tin liên tục.</b>", chat_id=chat_id, reply_to=msg_id)
+                    continue
+
+                if lower_text.startswith("/interval"):
+                    parts = text.split()
+                    if len(parts) >= 2:
+                        try:
+                            val = float(parts[1])
+                            sec = int(val * 60) if val < 30 else int(val)
+                            sec = max(30, min(1800, sec))
+                            cfg = load_realtime_config()
+                            cfg["interval_seconds"] = sec
+                            save_realtime_config(cfg)
+                            send_msg(f"✅ <b>Đã cập nhật chu kỳ quét liên tục:</b> <code>{sec}</code> giây ({sec//60} phút)!", chat_id=chat_id, reply_to=msg_id)
+                            continue
+                        except ValueError:
+                            pass
+                    send_msg("⚠️ Cú pháp: <code>/interval 3</code> (quét mỗi 3 phút) hoặc <code>/interval 180</code>", chat_id=chat_id, reply_to=msg_id)
+                    continue
+
+                if lower_text.startswith("/threshold") or lower_text.startswith("/diem"):
+                    parts = text.split()
+                    if len(parts) >= 2:
+                        try:
+                            val = float(parts[1])
+                            if 5.0 <= val <= 10.0:
+                                cfg = load_realtime_config()
+                                cfg["threshold"] = val
+                                save_realtime_config(cfg)
+                                send_msg(f"✅ <b>Đã cập nhật ngưỡng điểm kịch tính:</b> <code>{val}/10</code>!\nChỉ những bài có điểm >= {val} mới được gửi cảnh báo.", chat_id=chat_id, reply_to=msg_id)
+                                continue
+                        except ValueError:
+                            pass
+                    send_msg("⚠️ Cú pháp: <code>/threshold 8.0</code> (ngưỡng từ 5.0 đến 10.0)", chat_id=chat_id, reply_to=msg_id)
+                    continue
+
+                if lower_text in ["/check", "kiem tra", "kiểm tra", "check"]:
+                    send_msg("🔍 <b>Đang kích hoạt quét rà soát toàn bộ các báo lớn ngay lập tức...</b>", chat_id=chat_id, reply_to=msg_id)
+                    def run_manual_check(target_c=chat_id):
+                        cfg = load_realtime_config()
+                        found = scan_realtime_breaking_news(
+                            threshold=float(cfg.get("threshold", 7.8)),
+                            max_age_hours=float(cfg.get("max_age_hours", 2.0)),
+                            force_evaluate=True
+                        )
+                        if found:
+                            send_msg(f"🎯 <b>Tìm thấy {len(found)} bài báo nóng đột biến:</b>", chat_id=target_c)
+                            for it in found:
+                                txt = format_realtime_alert(it)
+                                mk = create_realtime_markup(it)
+                                send_msg(txt, chat_id=target_c, reply_markup=mk)
+                                time.sleep(1.2)
+                        else:
+                            send_msg("✅ <b>Không có tin nóng đột biến mới nào vượt ngưỡng tại thời điểm này.</b> Radar vẫn tiếp tục rình 24/7!", chat_id=target_c)
+                    threading.Thread(target=run_manual_check, daemon=True).start()
                     continue
 
                 if lower_text in ["/schedule", "lich quet", "lịch quét", "/lich"]:

@@ -37,7 +37,9 @@ FEEDS = [
     ("VietNamNet Thời sự", "https://vietnamnet.vn/rss/thoi-su.rss"),
     ("VietNamNet Pháp luật", "https://vietnamnet.vn/rss/phap-luat.rss"),
     ("Thanh Niên", "https://thanhnien.vn/rss/home.rss"),
-    ("Thanh Niên Thời sự", "https://thanhnien.vn/rss/thoi-su.rss")
+    ("Thanh Niên Thời sự", "https://thanhnien.vn/rss/thoi-su.rss"),
+    ("Tiền Phong", "https://tienphong.vn/rss/phap-luat-12.rss"),
+    ("Tiền Phong Xã hội", "https://tienphong.vn/rss/xa-hoi-2.rss")
 ]
 
 HEADERS = {
@@ -282,3 +284,216 @@ def scout_hot_news(hours_min=6.0, hours_max=9.0, send_to_telegram=False, bot_tok
                 time.sleep(2)
 
     return ranked
+
+# ==============================================================================
+# HỆ THỐNG RADAR SĂN TIN NÓNG LIÊN TỤC 24/7 THEO THỜI GIAN THỰC (REAL-TIME SCOUT)
+# ==============================================================================
+
+SEEN_FILE = os.path.join(os.path.dirname(__file__), "seen_articles.json")
+
+def load_seen_articles():
+    if os.path.exists(SEEN_FILE):
+        try:
+            with open(SEEN_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                return set(data)
+        except Exception:
+            pass
+    return set()
+
+def save_seen_articles(seen_set):
+    try:
+        items = list(seen_set)[-2000:]
+        with open(SEEN_FILE, "w", encoding="utf-8") as f:
+            json.dump(items, f, ensure_ascii=False)
+    except Exception as e:
+        print("[REALTIME] Lỗi lưu seen_articles:", e)
+
+def get_clean_key(title, link):
+    norm_t = re.sub(r'[^\w\s]', '', title.lower()).strip()
+    return f"{link}|{norm_t[:60]}"
+
+def scan_realtime_breaking_news(threshold=7.8, max_age_hours=2.0, force_evaluate=False):
+    """
+    Quét liên tục các đầu báo hàng đầu Việt Nam:
+    - Tìm bài mới xuất bản (trong vòng 0 - max_age_hours).
+    - Lọc bỏ tin đã xử lý trước đó.
+    - Đưa vào Gemini phân tích và chấm điểm độ giật gân, kịch tính, viral.
+    - Trả về danh sách bài có viral_score >= threshold.
+    """
+    seen_articles = load_seen_articles()
+    all_items = []
+    with ThreadPoolExecutor(max_workers=10) as executor:
+        results = executor.map(fetch_feed_items, FEEDS)
+        for r in results:
+            all_items.extend(r)
+
+    all_items.sort(key=lambda x: x.get('age_hours', 99))
+
+    # Lọc bài trong khung thời gian hợp lệ
+    candidates = [
+        item for item in all_items 
+        if 0.0 <= item.get('age_hours', 99) <= max_age_hours
+    ]
+
+    # Khử trùng lặp nội bộ
+    unique_candidates = []
+    seen_in_batch = set()
+    for item in candidates:
+        key = get_clean_key(item['title'], item['link'])
+        if key not in seen_in_batch and item['link'] not in seen_in_batch:
+            seen_in_batch.add(key)
+            seen_in_batch.add(item['link'])
+            unique_candidates.append(item)
+
+    # Nếu lần đầu tiên chạy và chưa có lịch sử, khởi tạo mốc cơ sở
+    if not seen_articles and not force_evaluate:
+        for item in unique_candidates:
+            seen_articles.add(get_clean_key(item['title'], item['link']))
+            seen_articles.add(item['link'])
+        save_seen_articles(seen_articles)
+        print(f"[REALTIME] 🏁 Đã khởi tạo mốc cơ sở với {len(seen_articles)} bài báo. Bắt đầu rà soát tin mới từ chu kỳ tiếp theo!")
+        return []
+
+    # Tìm các bài chưa từng quét
+    new_unseen = []
+    for item in unique_candidates:
+        key = get_clean_key(item['title'], item['link'])
+        if key not in seen_articles and item['link'] not in seen_articles:
+            new_unseen.append(item)
+
+    if not new_unseen:
+        return []
+
+    print(f"[REALTIME] 🔍 Phát hiện {len(new_unseen)} bài báo mới xuất bản! Đang gửi Gemini phân tích độ hot...")
+
+    # Đánh dấu vào seen_articles
+    for item in new_unseen:
+        seen_articles.add(get_clean_key(item['title'], item['link']))
+        seen_articles.add(item['link'])
+    save_seen_articles(seen_articles)
+
+    batch_to_evaluate = new_unseen[:25]
+    articles_text = ""
+    for idx, c in enumerate(batch_to_evaluate, 1):
+        age_min = int(c.get('age_hours', 0) * 60)
+        articles_text += f"[{idx}] Báo: {c['source']} | Cách đây: {age_min} phút\n"
+        articles_text += f"Tiêu đề: {c['title']}\n"
+        articles_text += f"Link: {c['link']}\n"
+        articles_text += f"Mô tả: {c['desc']}\n\n"
+
+    prompt = f"""
+Bạn là Tổng biên tập tin tức mạng xã hội & Nhà sản xuất video tin tức ngắn TikTok/Reels/Shorts triệu view.
+Dưới đây là danh sách các bài báo tiếng Việt VỪA MỚI XUẤT BẢN trên các đầu báo lớn:
+
+{articles_text}
+
+NHIỆM VỤ:
+Tìm và lọc ra những bài báo THỰC SỰ GIẬT GÂN, NÓNG, ĐỘT BIẾN, HOẶC CÓ TIỀM NĂNG VIRAL / TRANH LUẬN DỮ DỘI (Điểm kịch tính viral_score >= {threshold}/10).
+
+TIÊU CHÍ BẮT BUỘC:
+1. Vụ án lớn, bắt giữ khẩn cấp, khởi tố đại án, lừa đảo chấn động, triệt phá tội phạm.
+2. Tai nạn nghiêm trọng, cháy nổ, thiên tai khẩn cấp, sự cố hy hữu chấn động.
+3. Vấn đề bức xúc đời sống dư luận, tranh cãi gay gắt, hiện tượng mạng đang dậy sóng.
+4. Nhân vật nổi tiếng, người có ảnh hưởng, quan chức gặp biến cố / scandal / phát ngôn gây bão.
+5. Sự kiện đột biến ảnh hưởng trực tiếp số đông.
+
+LOẠI BỎ TRIỆT ĐỂ:
+- Tin hội nghị, họp hành, báo cáo hành chính, đại hội phong trào.
+- Tin giá cả định kỳ, chứng khoán thường ngày, thời tiết bình thường.
+
+YÊU CẦU ĐẦU RA (CHỈ XUẤT JSON HỢP LỆ):
+Nếu KHÔNG CÓ bài nào đủ độ giật gân (>= {threshold}), trả về đúng:
+{{"hot_news": []}}
+
+Nếu CÓ bài đạt chuẩn, xuất danh sách:
+{{
+  "hot_news": [
+    {{
+      "title": "Tiêu đề gốc bài báo",
+      "source": "Tên báo",
+      "url": "Link bài báo gốc",
+      "age_minutes": 25,
+      "viral_score": 9.2,
+      "sensational_hook": "1 câu tít hook mở đầu video 9:16 cực sốc và gay cấn",
+      "why_hot": "Lý do vì sao bài này sẽ bùng nổ view và tương tác mạng xã hội",
+      "summary": "Tóm tắt cốt lõi sự việc trong 2 dòng ngắn"
+    }}
+  ]
+}}
+"""
+    client_genai = genai.Client(api_key=GEMINI_API_KEY)
+    resp = None
+    for m in ['gemini-2.5-flash', 'gemini-3.5-flash-lite', 'gemini-1.5-flash']:
+        try:
+            resp = client_genai.models.generate_content(
+                model=m,
+                contents=prompt,
+                config={'response_mime_type': 'application/json'}
+            )
+            if resp and resp.text:
+                break
+        except Exception:
+            pass
+
+    if not resp or not resp.text:
+        return []
+
+    try:
+        data = json.loads(resp.text)
+        hot_list = data.get("hot_news", [])
+        qualifying = [h for h in hot_list if float(h.get("viral_score", 0)) >= threshold]
+        return qualifying
+    except Exception as e:
+        print("[REALTIME] Lỗi parse JSON Gemini:", e)
+        return []
+
+def format_realtime_alert(item):
+    now_time = datetime.now(VN_TZ).strftime("%H:%M")
+    title = item.get("title", "")
+    source = item.get("source", "")
+    url = item.get("url", "")
+    score = item.get("viral_score", 8.5)
+    hook = item.get("sensational_hook", "")
+    why = item.get("why_hot", "")
+    summary = item.get("summary", "")
+    age_min = item.get("age_minutes", 0)
+
+    age_str = f"{int(age_min)} phút trước" if age_min > 0 else "vừa xuất bản"
+
+    msg = (
+        f"🚨 <b>[TIN NÓNG ĐỘT BIẾN - REAL-TIME RADAR]</b>\n"
+        f"⏱️ <i>Phát hiện lúc: {now_time} (Giờ VN)</i>\n"
+        f"━━━━━━━━━━━━━━━━━━━\n\n"
+        f"📰 <b>{title}</b>\n"
+        f"🏢 <b>Nguồn:</b> {source} | ⏳ <i>{age_str}</i>\n"
+        f"⭐ <b>Điểm kịch tính:</b> <b>{score}/10</b> 🔥🔥🔥\n\n"
+        f"🎯 <b>Tít hook video:</b>\n"
+        f"<i>\"{hook}\"</i>\n\n"
+        f"💥 <b>Điểm nóng gây sốt:</b>\n"
+        f"👉 {why}\n\n"
+        f"📝 <b>Tóm lược sự việc:</b>\n"
+        f"<i>{summary}</i>\n\n"
+        f"📋 <b>Link bài báo (chạm để copy):</b>\n"
+        f"<code>{url}</code>"
+    )
+    return msg
+
+def create_realtime_markup(item):
+    url = item.get("url", "")
+    return {
+        "inline_keyboard": [
+            [
+                {
+                    "text": "🎬 Mở Bot Dựng Video 9:16 (@new3089bot)",
+                    "url": f"https://t.me/{NEWS_BOT_USERNAME}"
+                }
+            ],
+            [
+                {
+                    "text": "📖 Đọc bài báo gốc",
+                    "url": url if url else "https://google.com"
+                }
+            ]
+        ]
+    }
