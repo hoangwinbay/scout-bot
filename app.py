@@ -63,7 +63,7 @@ def load_realtime_config():
     return {
         "enabled": True,
         "interval_seconds": 180,  # Quét liên tục mỗi 3 phút
-        "threshold": 7.8,         # Điểm kịch tính viral >= 7.8/10
+        "threshold": 7.0,         # Điểm kịch tính viral >= 7.0/10
         "max_age_hours": 2.0
     }
 
@@ -81,7 +81,7 @@ def realtime_monitor_loop():
         try:
             cfg = load_realtime_config()
             if cfg.get("enabled", True):
-                threshold = float(cfg.get("threshold", 7.8))
+                threshold = float(cfg.get("threshold", 7.0))
                 max_age = float(cfg.get("max_age_hours", 2.0))
 
                 hot_items = scan_realtime_breaking_news(

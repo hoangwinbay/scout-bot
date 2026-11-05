@@ -313,7 +313,7 @@ def get_clean_key(title, link):
     norm_t = re.sub(r'[^\w\s]', '', title.lower()).strip()
     return f"{link}|{norm_t[:60]}"
 
-def scan_realtime_breaking_news(threshold=7.8, max_age_hours=2.0, force_evaluate=False):
+def scan_realtime_breaking_news(threshold=7.0, max_age_hours=2.0, force_evaluate=False):
     """
     Quét liên tục các đầu báo hàng đầu Việt Nam:
     - Tìm bài mới xuất bản (trong vòng 0 - max_age_hours).
@@ -346,26 +346,27 @@ def scan_realtime_breaking_news(threshold=7.8, max_age_hours=2.0, force_evaluate
             seen_in_batch.add(item['link'])
             unique_candidates.append(item)
 
-    # Nếu lần đầu tiên chạy và chưa có lịch sử, khởi tạo mốc cơ sở
-    if not seen_articles and not force_evaluate:
+    # Nếu lần đầu tiên chạy và chưa có lịch sử, khởi tạo mốc cơ sở nhưng vẫn lọc ngay tin nóng gần nhất
+    is_first_boot = not bool(seen_articles)
+    if is_first_boot and not force_evaluate:
         for item in unique_candidates:
             seen_articles.add(get_clean_key(item['title'], item['link']))
             seen_articles.add(item['link'])
         save_seen_articles(seen_articles)
-        print(f"[REALTIME] 🏁 Đã khởi tạo mốc cơ sở với {len(seen_articles)} bài báo. Bắt đầu rà soát tin mới từ chu kỳ tiếp theo!")
-        return []
-
-    # Tìm các bài chưa từng quét
-    new_unseen = []
-    for item in unique_candidates:
-        key = get_clean_key(item['title'], item['link'])
-        if key not in seen_articles and item['link'] not in seen_articles:
-            new_unseen.append(item)
+        print(f"[REALTIME] 🏁 Khởi động lần đầu: Đang thẩm định ngay các bài báo nóng nhất trong 2h qua...")
+        new_unseen = unique_candidates[:20]
+    else:
+        # Tìm các bài chưa từng quét
+        new_unseen = []
+        for item in unique_candidates:
+            key = get_clean_key(item['title'], item['link'])
+            if key not in seen_articles and item['link'] not in seen_articles:
+                new_unseen.append(item)
 
     if not new_unseen:
         return []
 
-    print(f"[REALTIME] 🔍 Phát hiện {len(new_unseen)} bài báo mới xuất bản! Đang gửi Gemini phân tích độ hot...")
+    print(f"[REALTIME] 🔍 Đang thẩm định {len(new_unseen)} bài báo mới xuất bản qua Gemini...")
 
     # Đánh dấu vào seen_articles
     for item in new_unseen:
