@@ -480,21 +480,44 @@ def format_realtime_alert(item):
     )
     return msg
 
+def make_short_code(url):
+    if not url:
+        return None
+    try:
+        r = requests.get(f"https://tinyurl.com/api-create.php?url={url}", timeout=4)
+        if r.status_code == 200 and "tinyurl.com/" in r.text:
+            return r.text.strip().split("/")[-1]
+    except Exception:
+        pass
+    return None
+
 def create_realtime_markup(item):
     url = item.get("url", "")
-    return {
-        "inline_keyboard": [
-            [
-                {
-                    "text": "🎬 Mở Bot Dựng Video 9:16 (@new3089bot)",
-                    "url": f"https://t.me/{NEWS_BOT_USERNAME}"
-                }
-            ],
-            [
-                {
-                    "text": "📖 Đọc bài báo gốc",
-                    "url": url if url else "https://google.com"
-                }
-            ]
-        ]
-    }
+    short_code = make_short_code(url)
+    buttons = []
+    if short_code:
+        buttons.append([
+            {
+                "text": "🎬 Dựng video 9:16 ngay (1 chạm)",
+                "url": f"https://t.me/{NEWS_BOT_USERNAME}?start=tu_{short_code}"
+            }
+        ])
+    else:
+        buttons.append([
+            {
+                "text": "🎬 Mở Bot Dựng Video 9:16 (@new3089bot)",
+                "url": f"https://t.me/{NEWS_BOT_USERNAME}"
+            }
+        ])
+
+    buttons.append([
+        {
+            "text": "📤 Chuyển tiếp link sang Bot News",
+            "url": f"https://t.me/share/url?url={url}&text=Dựng%20video%209:16"
+        },
+        {
+            "text": "📖 Đọc bài báo gốc",
+            "url": url if url else "https://google.com"
+        }
+    ])
+    return {"inline_keyboard": buttons}
