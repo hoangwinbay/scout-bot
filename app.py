@@ -264,8 +264,10 @@ def self_ping_loop():
         print("[SELF-PING] Không có BOT_TOKEN -> không tự ping (tránh tốn giờ free vô ích).")
         return
     print(f"[SELF-PING] Tự ping {base}/healthz mỗi 10 phút để giữ service thức.")
+    first = True
     while True:
-        time.sleep(600)
+        time.sleep(60 if first else 600)
+        first = False
         try:
             r = requests.get(f"{base}/healthz", timeout=20)
             DIAG["self_ping"] = datetime.now(VN_TZ).strftime('%H:%M:%S')
