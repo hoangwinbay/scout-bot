@@ -31,6 +31,16 @@ from hot_news_scout import (
 PORT = int(os.environ.get("PORT", 8000))
 SCHEDULE_PATH = os.path.join(os.path.dirname(__file__), "scout_schedule.json")
 
+# --- Chan doan tu xa (endpoint /diag) ---
+START_TS = time.time()
+DIAG = {
+    "loop_started": False,
+    "polls": 0,
+    "last_status": None,
+    "last_poll_at": None,
+    "last_error": None,
+}
+
 def load_schedule():
     if os.path.exists(SCHEDULE_PATH):
         try:
@@ -172,6 +182,41 @@ class HealthHandler(BaseHTTPRequestHandler):
             self.wfile.write(b"OK")
             return
 
+        if self.path == '/diag':
+            import platform
+            info = {
+                "ok": True,
+                "uptime_seconds": int(time.time() - START_TS),
+                "python": platform.python_version(),
+                "port": PORT,
+                "bot_token_set": bool(BOT_TOKEN),
+                "bot_token_len": len(BOT_TOKEN or ""),
+                "api_base": API_BASE,
+                "loop_started": DIAG["loop_started"],
+                "polls": DIAG["polls"],
+                "last_status": DIAG["last_status"],
+                "last_poll_at": DIAG["last_poll_at"],
+                "last_error": DIAG["last_error"],
+                "server_time_vn": datetime.now(VN_TZ).strftime('%H:%M:%S %d/%m/%Y'),
+            }
+            if BOT_TOKEN:
+                try:
+                    r = requests.get(f"{API_BASE}/getMe", timeout=10)
+                    info["getme_http"] = r.status_code
+                    if r.status_code == 200:
+                        info["getme"] = r.json().get("result", {}).get("username")
+                    else:
+                        info["getme_body"] = r.text[:200]
+                except Exception as e:
+                    info["getme_error"] = str(e)[:200]
+            body = json.dumps(info, ensure_ascii=False).encode('utf-8')
+            self.send_response(200)
+            self.send_header('Content-type', 'application/json; charset=utf-8')
+            self.send_header('Content-Length', str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+
         self.send_response(200)
         self.send_header('Content-type', 'text/html; charset=utf-8')
         self.end_headers()
@@ -240,13 +285,17 @@ def start_scout_bot():
 
     offset = None
     last_err_time = 0
+    DIAG["loop_started"] = True
     while True:
         try:
+            DIAG["polls"] += 1
+            DIAG["last_poll_at"] = datetime.now(VN_TZ).strftime('%H:%M:%S')
             params = {"timeout": 30}
             if offset is not None:
                 params["offset"] = offset
 
             resp = requests.get(f"{API_BASE}/getUpdates", params=params, timeout=35)
+            DIAG["last_status"] = resp.status_code
             if resp.status_code != 200:
                 cur_t = time.time()
                 if cur_t - last_err_time > 15:
@@ -497,9 +546,11 @@ def start_scout_bot():
                     reply_to=msg_id
                 )
 
-        except requests.exceptions.RequestException:
+        except requests.exceptions.RequestException as e:
+            DIAG["last_error"] = "RequestException: " + str(e)[:180]
             time.sleep(3)
         except Exception as e:
+            DIAG["last_error"] = "Exception: " + str(e)[:180]
             print(f"[SCOUT_BOT] Lỗi loop: {e}")
             time.sleep(3)
 
