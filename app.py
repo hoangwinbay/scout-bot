@@ -191,7 +191,7 @@ class HealthHandler(BaseHTTPRequestHandler):
                 "port": PORT,
                 "bot_token_set": bool(BOT_TOKEN),
                 "bot_token_len": len(BOT_TOKEN or ""),
-                "api_base": API_BASE,
+                "api_base": (API_BASE.replace(BOT_TOKEN, BOT_TOKEN[:6] + "***") if BOT_TOKEN else "https://api.telegram.org/bot<EMPTY>"),
                 "loop_started": DIAG["loop_started"],
                 "polls": DIAG["polls"],
                 "last_status": DIAG["last_status"],
