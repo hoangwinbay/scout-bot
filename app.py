@@ -39,6 +39,8 @@ DIAG = {
     "last_status": None,
     "last_poll_at": None,
     "last_error": None,
+    "self_ping": None,
+    "self_ping_status": None,
 }
 
 def load_schedule():
@@ -197,6 +199,9 @@ class HealthHandler(BaseHTTPRequestHandler):
                 "last_status": DIAG["last_status"],
                 "last_poll_at": DIAG["last_poll_at"],
                 "last_error": DIAG["last_error"],
+                "self_ping": DIAG["self_ping"],
+                "self_ping_status": DIAG["self_ping_status"],
+                "render_url_set": bool(os.environ.get("RENDER_EXTERNAL_URL")),
                 "server_time_vn": datetime.now(VN_TZ).strftime('%H:%M:%S %d/%m/%Y'),
             }
             if BOT_TOKEN:
@@ -249,6 +254,25 @@ def run_health_server():
     print(f"[HTTP] ✅ Health Check server đang lắng nghe tại port {PORT}...")
     httpd.serve_forever()
 
+def self_ping_loop():
+    """Tu goi healthz cua chinh minh moi 10 phut de Render free khong spin-down."""
+    base = os.environ.get("RENDER_EXTERNAL_URL", "").rstrip("/")
+    if not base:
+        print("[SELF-PING] Không có RENDER_EXTERNAL_URL -> bỏ qua tự ping.")
+        return
+    if not BOT_TOKEN:
+        print("[SELF-PING] Không có BOT_TOKEN -> không tự ping (tránh tốn giờ free vô ích).")
+        return
+    print(f"[SELF-PING] Tự ping {base}/healthz mỗi 10 phút để giữ service thức.")
+    while True:
+        time.sleep(600)
+        try:
+            r = requests.get(f"{base}/healthz", timeout=20)
+            DIAG["self_ping"] = datetime.now(VN_TZ).strftime('%H:%M:%S')
+            DIAG["self_ping_status"] = r.status_code
+        except Exception as e:
+            DIAG["self_ping"] = "lỗi: " + str(e)[:80]
+
 def start_scout_bot():
     print("======================================================")
     print("   SCOUT BOT CLOUD 24/7 (@findnew009bot)              ")
@@ -274,6 +298,10 @@ def start_scout_bot():
     # Bật Health Server
     t_http = threading.Thread(target=run_health_server, daemon=True)
     t_http.start()
+
+    # Tu giu service thuc tren Render free (khong de bi spin-down sau 15 phut)
+    t_ping = threading.Thread(target=self_ping_loop, daemon=True)
+    t_ping.start()
 
     # Bật Radar rà soát tin nóng liên tục 24/7 (Real-time Scout)
     t_realtime = threading.Thread(target=realtime_monitor_loop, daemon=True)
