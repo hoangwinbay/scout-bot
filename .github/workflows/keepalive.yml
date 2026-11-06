@@ -1,0 +1,20 @@
+name: Keep Render Bot Awake
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping health endpoint
+        env:
+          RENDER_URL: ${{ secrets.RENDER_URL }}
+        run: |
+          if [ -z "$RENDER_URL" ]; then
+            echo "RENDER_URL chua duoc dat trong Settings > Secrets and variables > Actions"
+            exit 0
+          fi
+          curl -fsS --max-time 30 --retry 3 --retry-delay 5 "$RENDER_URL/healthz" && echo " -> OK"

@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: scout-bot-findnews
+    runtime: docker
+    plan: free
+    region: singapore
+    healthCheckPath: /healthz
+    autoDeploy: true
+    envVars:
+      - key: BOT_TOKEN
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: ADMIN_CHAT_ID
+        value: "6368500019"
+      - key: NEWS_BOT_USERNAME
+        value: new3089bot
+      - key: TZ
+        value: Asia/Ho_Chi_Minh
